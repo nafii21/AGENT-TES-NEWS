@@ -5,12 +5,22 @@ from quant_scorer import score_event
 from ai_predictor import ai_decide
 from ff_calendar import fetch_calendar, within_window
 from telegram_bot import send, format_prediction, format_accuracy_report
+from config import PREDICT_HOURS_BEFORE
 
 def run_predictor():
     print(f"[{datetime.utcnow():%H:%M}] === RUN PREDICTOR ===")
     events = [e for e in fetch_calendar() if within_window(e)]
     indicators = collect_all()
     print(f"Event high-impact: {len(events)} | Indikator: {len(indicators)}")
+
+    # ── Kalau tidak ada event, kasih tau via Telegram ──
+    if not events:
+        send("📭 <b>Tidak ada news high-impact</b> dalam window "
+             f"{PREDICT_HOURS_BEFORE} jam ke depan.\n"
+             "⏳ Bot akan cek lagi di run berikutnya.")
+        print("  → no events, notif sent")
+        return
+
     for ev in events:
         q = score_event(ev["title"], indicators)
         if not q:
