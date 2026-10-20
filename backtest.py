@@ -9,10 +9,20 @@ Cara pakai:
 """
 import csv
 import os
-from knowledge_base import KNOWLEDGE
+
+# ── Import knowledge base secara defensif ──
+# Tidak peduli variabelnya bernama KNOWLEDGE / KB / DATABASE, otomatis kedetect.
+import knowledge_base as kb
 from ai_predictor import ai_decide
 from quant_scorer import score_event
 from telegram_bot import send
+
+KNOWLEDGE = (
+    getattr(kb, "KNOWLEDGE", None)
+    or getattr(kb, "KB", None)
+    or getattr(kb, "DATABASE", None)
+    or getattr(kb, "KNOWLEDGE_BASE", None)
+)
 
 CSV_FILE = "backtest_events.csv"
 
@@ -27,6 +37,18 @@ def load_events():
         rows = [r for r in csv.DictReader(f) if r.get("title") and r.get("actual")]
     print(f"✅ Loaded {len(rows)} event historis dari {CSV_FILE}")
     return rows
+
+
+def title_in_kb(title):
+    """Cek judul event ada di knowledge base (aman walau KB None / bentuk apapun)."""
+    if not KNOWLEDGE:
+        return False
+    try:
+        titles = KNOWLEDGE.keys() if isinstance(KNOWLEDGE, dict) else KNOWLEDGE
+        t = title.lower()
+        return any(t in str(k).lower() or str(k).lower() in t for k in titles)
+    except Exception:
+        return False
 
 
 def predict_without_actual(event):
@@ -51,11 +73,7 @@ def predict_without_actual(event):
         q = {}
 
     # Kalau judul tidak dikenali knowledge base → skip
-    known = any(
-        ev["title"].lower() in k.lower() or k.lower() in ev["title"].lower()
-        for k in KNOWLEDGE
-    )
-    if not q and not known:
+    if not q and not title_in_kb(ev["title"]):
         print(f"  ⚠️ skip (tidak ada di KB): {ev['title']}")
         return None
 
@@ -67,7 +85,7 @@ def predict_without_actual(event):
 
 
 def to_number(text):
-    """'2.9%' / '160K' / '4.25%' → float."""
+    """'2.9%' / '160K' / '12K' → float."""
     if text is None:
         return None
     t = str(text).strip().replace("%", "").replace("K", "").replace("M", "").replace(",", "")
@@ -98,6 +116,11 @@ def run_backtest():
     print("=" * 50)
     print("        BACKTEST FF AI PREDICTOR")
     print("=" * 50)
+
+    if KNOWLEDGE is None:
+        print("  ⚠️ WARNING: knowledge base tidak terdeteksi — semua event non-quant akan di-skip")
+    else:
+        print("  ✅ Knowledge base terdeteksi")
 
     events = load_events()
     if not events:
