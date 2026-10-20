@@ -3,19 +3,12 @@ BACKTEST — prediksi news masa lalu TANPA lihat actual.
 Actual HANYA dipakai setelah prediksi selesai, untuk ngukur akurasi.
 
 Cara pakai:
-  1. Isi data historis di backtest_events.csv (lihat format di bawah)
-  2. Run: python backtest.py
-  3. Hasil: tabel akurasi di terminal + laporan ke Telegram
-
-Format backtest_events.csv (judul harus match dengan knowledge_base.py):
-title,date,forecast,previous,actual
-Non-Farm Payrolls,2025-01-10,160K,212K,256K
-CPI y/y,2025-01-15,2.9%,2.7%,2.9%
+  1. Isi data historis di backtest_events.csv
+  2. Run: python backtest.py (atau via GitHub Actions workflow "Backtest")
+  3. Hasil: tabel akurasi di log + laporan ke Telegram
 """
 import csv
 import os
-from datetime import datetime
-from config import DB_PATH
 from knowledge_base import KNOWLEDGE
 from ai_predictor import ai_decide
 from quant_scorer import score_event
@@ -25,27 +18,32 @@ CSV_FILE = "backtest_events.csv"
 
 
 def load_events():
+    """Load data historis dari CSV."""
     if not os.path.exists(CSV_FILE):
-        print(f"❌ File {CSV_FILE} tidak ada. Buat dulu, format:")
+        print(f"❌ File {CSV_FILE} tidak ada. Format:")
         print("title,date,forecast,previous,actual")
         return []
     with open(CSV_FILE, newline="", encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f) if r.get("title")]
-    print(f"Loaded {len(rows)} event historis dari {CSV_FILE}")
+        rows = [r for r in csv.DictReader(f) if r.get("title") and r.get("actual")]
+    print(f"✅ Loaded {len(rows)} event historis dari {CSV_FILE}")
     return rows
 
 
 def predict_without_actual(event):
-    """Prediksi PAKAI data pre-release saja — actual tidak di-pass ke AI."""
+    """
+    Prediksi PAKAI data pre-release saja.
+    event['actual'] SENGAJA tidak di-pass ke AI — biar tidak bocor.
+    """
     ev = {
         "title":    event["title"],
         "date":     event["date"],
         "time":     "-",
         "impact":   "High",
-        "forecast": event["forecast"],
-        "previous": event["previous"],
+        "forecast": event.get("forecast", ""),
+        "previous": event.get("previous", ""),
     }
-    # Coba pakai quant scorer; kalau gagal/empty, tetap lanjut ke AI
+
+    # Quant score — kalau gagal, lanjut dengan dict kosong
     try:
         q = score_event(ev["title"], {}) or {}
     except Exception as e:
@@ -53,22 +51,42 @@ def predict_without_actual(event):
         q = {}
 
     # Kalau judul tidak dikenali knowledge base → skip
-    if not q and not any(ev["title"].lower() in k.lower() or k.lower() in ev["title"].lower()
-                         for k in KNOWLEDGE):
+    known = any(
+        ev["title"].lower() in k.lower() or k.lower() in ev["title"].lower()
+        for k in KNOWLEDGE
+    )
+    if not q and not known:
+        print(f"  ⚠️ skip (tidak ada di KB): {ev['title']}")
         return None
 
-    return ai_decide(ev, q, ev["forecast"], ev["previous"])
+    try:
+        return ai_decide(ev, q, ev["forecast"], ev["previous"])
+    except Exception as e:
+        print(f"  ⚠️ AI gagal utk '{ev['title']}': {e}")
+        return None
+
+
+def to_number(text):
+    """'2.9%' / '160K' / '4.25%' → float."""
+    if text is None:
+        return None
+    t = str(text).strip().replace("%", "").replace("K", "").replace("M", "").replace(",", "")
+    try:
+        return float(t)
+    except ValueError:
+        return None
 
 
 def judge(prediksi, forecast, actual):
     """Bandingkan prediksi vs actual — dipanggil SETELAH prediksi."""
-    try:
-        f = float(forecast.replace("%", "").replace("K", "").replace("M", ""))
-        a = float(actual.replace("%", "").replace("K", "").replace("M", ""))
-    except (ValueError, AttributeError):
+    f = to_number(forecast)
+    a = to_number(actual)
+    if f is None or a is None:
         return "SKIP"
+
     if prediksi == "INLINE":
-        return abs(a - f) / abs(f) < 0.15 if f else abs(a - f) < 0.1
+        # toleransi 15% dari forecast (atau 0.1 kalau forecast ~ 0)
+        return abs(a - f) / abs(f) < 0.15 if f != 0 else abs(a - f) < 0.1
     if prediksi == "BEAT":
         return a > f
     if prediksi == "MISS":
@@ -80,46 +98,59 @@ def run_backtest():
     print("=" * 50)
     print("        BACKTEST FF AI PREDICTOR")
     print("=" * 50)
+
     events = load_events()
     if not events:
+        print("❌ Tidak ada event untuk di-backtest.")
         return
 
     results = []
     for ev in events:
         ai = predict_without_actual(ev)
         if not ai:
-            print(f"  ⚠️ skip (no KB): {ev['title']}")
             continue
-        ok = judge(ai["prediksi"], ev["forecast"], ev["actual"])
+        ok = judge(ai.get("prediksi"), ev["forecast"], ev["actual"])
         results.append({"ev": ev, "ai": ai, "ok": ok})
-        mark = "✅" if ok else "❌"
-        print(f"  {mark} {ev['date']} {ev['title']:<30} "
-              f"pred={ai['prediksi']:<6} conf={ai['confidence']}% | "
+        mark = "✅" if ok is True else ("❌" if ok is False else "⏭️")
+        print(f"  {mark} {ev['date']} {ev['title']:<28} "
+              f"pred={ai.get('prediksi', '?'):<7} conf={ai.get('confidence', '?')}% | "
               f"fc={ev['forecast']} act={ev['actual']}")
 
     # ── Ringkasan ──
     scored = [r for r in results if r["ok"] != "SKIP"]
     total = len(scored)
-    benar = sum(1 for r in scored if r["ok"])
+    benar = sum(1 for r in scored if r["ok"] is True)
     pct = round(benar / total * 100) if total else 0
+
     print("-" * 50)
     print(f"  TOTAL: {total} | BENAR: {benar} | AKURASI: {pct}%")
 
     per_type = {}
     for r in scored:
-        per_type.setdefault(r["ai"]["prediksi"], []).append(r["ok"])
+        per_type.setdefault(r["ai"].get("prediksi", "?"), []).append(r["ok"])
     for p, oks in per_type.items():
-        b = sum(1 for x in oks if x)
+        b = sum(1 for x in oks if x is True)
         print(f"  {p:<7}: {b}/{len(oks)} benar")
 
     # ── Kirim ke Telegram ──
-    lines = [f"🔬 <b>HASIL BACKTEST</b>",
-             f"Total: {total} | Benar: {benar} | <b>Akurasi: {pct}%</b>", ""]
-    for r in results:
-        mark = "✅" if r["ok"] else "❌"
-        lines.append(f"{mark} {r['ev']['title']}: pred {r['ai']['prediksi']} "
-                     f"→ fc {r['ev']['forecast']} vs act {r['ev']['actual']}")
-    send("\n".join(lines))
+    try:
+        lines = [
+            "🔬 <b>HASIL BACKTEST</b>",
+            f"Total: {total} | Benar: {benar} | <b>Akurasi: {pct}%</b>",
+            "",
+        ]
+        for r in results:
+            mark = "✅" if r["ok"] is True else ("❌" if r["ok"] is False else "⏭️")
+            lines.append(
+                f"{mark} {r['ev']['title']}: pred {r['ai'].get('prediksi', '?')} "
+                f"(conf {r['ai'].get('confidence', '?')}%) → "
+                f"fc {r['ev']['forecast']} vs act {r['ev']['actual']}"
+            )
+        send("\n".join(lines))
+    except Exception as e:
+        print(f"  ⚠️ Gagal kirim ke Telegram: {e}")
+
+    print("✅ Backtest selesai.")
 
 
 if __name__ == "__main__":
