@@ -1,5 +1,7 @@
 import requests
-from config import TG_URL
+from config import TELEGRAM_TOKEN, CHAT_ID
+
+TG_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
 ICONS = {"BEAT": "🟢", "MISS": "🔴", "INLINE": "🟡"}
 
@@ -16,7 +18,7 @@ def format_prediction(event, quant, ai):
         f"{ICONS.get(ai['prediksi'],'⚪')} <b>PREDIKSI: {ai['prediksi']}</b> "
         f"({ai['confidence']}%)",
         f"📊 <b>{event['title']}</b>",
-        f"🕒 {event['date']} | Impact: {event['impact']}",
+        f"🕒 {event['date']} {event['time']} | Impact: {event['impact']}",
         f"🎯 Forecast: {event['forecast']} | Prev: {event['previous']}",
         f"🧮 Quant score: {quant['skor']} (coverage {cov}%)",
         f"💡 {ai['alasan']}",
