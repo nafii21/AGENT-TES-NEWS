@@ -1,0 +1,42 @@
+name: FF AI Predictor
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"     # tiap 2 jam (UTC)
+  workflow_dispatch:           # tombol "Run workflow" manual
+
+permissions:
+  contents: write              # untuk commit balik DB
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: predictions.db
+          key: ff-db-1
+
+      - name: Run predictor
+        env:
+          GROQ_API: ${{ secrets.GROQ_API }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          FRED_API: ${{ secrets.FRED_API }}
+        run: python run_once.py
+
+      - name: Save database
+        uses: actions/cache/save@v4
+        with:
+          path: predictions.db
+          key: ff-db-${{ github.run_id }}
