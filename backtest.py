@@ -45,11 +45,18 @@ def predict_without_actual(event):
         "forecast": event["forecast"],
         "previous": event["previous"],
     }
-    q = score_event(ev["title"], {})  # quant dari knowledge base
-    if not q:
+    # Coba pakai quant scorer; kalau gagal/empty, tetap lanjut ke AI
+    try:
+        q = score_event(ev["title"], {}) or {}
+    except Exception as e:
+        print(f"  ⚠️ quant score gagal utk '{ev['title']}': {e}")
+        q = {}
+
+    # Kalau judul tidak dikenali knowledge base → skip
+    if not q and not any(ev["title"].lower() in k.lower() or k.lower() in ev["title"].lower()
+                         for k in KNOWLEDGE):
         return None
-    # ai_decide hanya menerima ev (forecast/previous), quant, dan konteks
-    # → TIDAK menerima event["actual"]
+
     return ai_decide(ev, q, ev["forecast"], ev["previous"])
 
 
