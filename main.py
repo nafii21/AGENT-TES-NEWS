@@ -3,7 +3,7 @@ from database import init_db, save_prediction, get_pending, settle, get_stats
 from data_sources import collect_all
 from quant_scorer import score_event
 from ai_predictor import ai_decide
-from calendar import fetch_calendar, within_window
+from ff_calendar import fetch_calendar, within_window
 from telegram_bot import send, format_prediction, format_accuracy_report
 
 def run_predictor():
