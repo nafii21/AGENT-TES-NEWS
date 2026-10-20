@@ -1,6 +1,5 @@
-import time
 from datetime import datetime
-from database import init_db, save_prediction, get_pending, settle
+from database import init_db, save_prediction, get_pending, settle, get_stats
 from data_sources import collect_all
 from quant_scorer import score_event
 from ai_predictor import ai_decide
@@ -22,21 +21,25 @@ def run_predictor():
         print(f"  ✓ {ev['title']} → {ai['prediksi']} ({ai['confidence']}%)")
 
 def run_reconcile():
-    """Bandingkan prediksi vs actual. Verdict sederhana: cocok/tidak."""
+    """Cek event yang sudah rilis di XML minggu ini → update actual & verdict."""
     print("=== RECONCILE ===")
+    events = {e["title"]: e for e in fetch_calendar()}
     for row in get_pending():
-        # actual belum tersedia di XML historis — verdict manual/placeholder
-        print(f"  pending: {row['event_title']}")
-    # Contoh stats
-    stats = {"total": 0, "benar": 0, "pct": 0, "beat": 0, "miss": 0, "inline": 0}
-    # send(format_accuracy_report(stats)) — aktifkan saat sudah ada data actual
-
-if __name__ == "__main__":
-    init_db()
-    while True:
-        try:
-            run_predictor()
-            run_reconcile()
-        except Exception as e:
-            print("ERROR:", e)
-        time.sleep(3600)  # tiap 1 jam
+        ev = events.get(row["event_title"])
+        if not ev or ev["forecast"] == "n/a":
+            continue
+        # event dianggap sudah rilis kalau "previous" sudah terisi nilai baru
+        # (di XML live, setelah rilis: previous = forecast lama, actual masuk)
+        actual = ev.get("previous")
+        if not actual or actual == row["previous"]:
+            continue
+        verdict = "BENAR" if row["prediksi"] == "INLINE" or \
+                  (row["prediksi"] == "BEAT" and actual > row["forecast"]) or \
+                  (row["prediksi"] == "MISS" and actual < row["forecast"]) \
+                  else "SALAH"
+        settle(row["id"], actual, verdict)
+        print(f"  ✓ settled: {row['event_title']} actual={actual} → {verdict}")
+    stats = get_stats()
+    if stats["total"]:
+        send(format_accuracy_report(stats))
+        print("  stats:", stats)
